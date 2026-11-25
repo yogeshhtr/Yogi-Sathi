@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity() {
         var row: LinearLayout? = null
         for ((i, k) in list.withIndex()) {
             if (i % n == 0) { row = hbox(); col.addView(row) }
-            row?.addView(tile(k), LinearLayout.LayoutParams(0, (size * if (n >= 3) 1f else 0.72f).toInt(), 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
+            row?.addView(tile(k, i), LinearLayout.LayoutParams(0, (size * if (n >= 3) 1f else 0.72f).toInt(), 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
         }
         val rest = list.size % n
         if (list.isNotEmpty() && rest != 0) for (k in 0 until n - rest) row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
@@ -239,10 +239,14 @@ class MainActivity : AppCompatActivity() {
         if (k.startsWith("app:")) appLabel(k.removePrefix("app:")) else BUILTIN[k]?.let { t(it.second, it.third) } ?: k
 
     /** a big icon only (the name is read out by TalkBack) */
-    private fun tile(k: String): View {
+    /** tile colours: 0 light (best for dark icons), 1 dark, 2 a different soft colour for each */
+    private val PASTEL = listOf(0xFFFFE0B2.toInt(), 0xFFC8E6C9.toInt(), 0xFFBBDEFB.toInt(), 0xFFF8BBD0.toInt(), 0xFFFFF9C4.toInt(), 0xFFD1C4E9.toInt(), 0xFFB2EBF2.toInt())
+    private fun tileColor(i: Int): Int = when (Store.int("tile_style", 0)) { 1 -> C.CARD; 2 -> PASTEL[i % PASTEL.size]; else -> 0xFFF7F3EC.toInt() }
+
+    private fun tile(k: String, i: Int = 0): View {
         val v = FrameLayout(this)
         val on = k == "torch" && torchOn
-        v.background = ripple(if (on) 0xFF5A4810.toInt() else C.CARD, 26f)
+        v.background = ripple(if (on) 0xFFFFC93C.toInt() else tileColor(i), 26f)
         v.contentDescription = tileName(k)
         val big = when (cols()) { 1 -> 110; 2 -> 84; 3 -> 62; else -> 48 }
         if (k.startsWith("app:")) {
@@ -490,6 +494,9 @@ class MainActivity : AppCompatActivity() {
         section(t("देखावट", "LOOK"))
         val lc = card()
         row(lc, t("एक पङ्क्तिमा टाइल", "Tiles per row"), listOf("1", "2", "3", "4"), cols() - 1) { Store.setInt("cols", it + 1) }
+        row(lc, t("टाइलको रङ", "Tile colour"), listOf(t("उज्यालो", "Light"), t("गाढा", "Dark"), t("रङ्गीन", "Colourful")), Store.int("tile_style", 0)) {
+            Store.setInt("tile_style", it)
+        }
         row(lc, t("घडीको आकार", "Clock size"), listOf(t("सानो", "Small"), t("मध्यम", "Medium"), t("ठूलो", "Big")), Store.int("clock_size", 1)) { Store.setInt("clock_size", it) }
         row(lc, t("भाषा", "Language"), listOf("नेपाली", "English"), if (Prefs.nepaliText) 0 else 1) { Store.setBool("np_text", it == 0) }
         row(lc, t("अंक", "Numbers"), listOf("१२३", "123"), if (Prefs.nepaliDigits) 0 else 1) { Store.setBool("np_digits", it == 0) }
