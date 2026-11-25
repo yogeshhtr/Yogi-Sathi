@@ -1,5 +1,12 @@
 # Yogi Sathi (साथी)
 
+## New in v7
+* **🆘 SOS tile**: a big red button that calls the chosen emergency person after a countdown. Choose who in Settings → Phone.
+* **🔊 Loud tile**: sets the ringtone, media and call volume to full in one tap.
+* **Speaking language**: Nepali or English, for the talking clock.
+* **Hourly talking clock** (optional): says the time every hour from 7 am to 9 pm.
+* **Double-tap to turn the screen off** (optional): double-tap the clock or an empty space. Android asks once to allow it.
+
 ## New in v2
 * **Built-in phone**: family photos, 3 per row (adjustable). Tap a photo to call, with a 3-second countdown and Cancel; or choose "ask first" or "call at once". Add people from the phone's contacts or by typing; choose photos; reorder. Emergency 100/101/102 and a dial pad are included. Yogi Ecall is no longer needed.
 * **Choose the tiles**: add any app (YouTube, Viber...) or the built-in Phone, Torch, Wi-Fi, Camera and Photos tiles. Remove or move them, and set 1 to 4 tiles per row.

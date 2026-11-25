@@ -78,7 +78,19 @@ class MainActivity : AppCompatActivity() {
                 ok(Locale("hi", "IN")) -> "hi"
                 else -> { try { tts?.setLanguage(Locale.ENGLISH) } catch (_: Exception) {}; "en" }
             }
+            nativeVoice = voice
         }
+    }
+
+    private var nativeVoice = "en"
+
+    /** the voice to use now: English if chosen in settings, else Nepali (or Hindi) */
+    private fun useVoice(): String {
+        val v = if (Store.int("speak_lang", 0) == 1) "en" else nativeVoice
+        try {
+            tts?.setLanguage(when (v) { "ne" -> Locale("ne", "NP"); "hi" -> Locale("hi", "IN"); else -> Locale.ENGLISH })
+        } catch (_: Exception) {}
+        return v
     }
 
     private fun ok(l: Locale): Boolean = try {
@@ -88,6 +100,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        Chime.schedule(this)
         draw()
         scheduleTick()
     }
@@ -148,7 +161,9 @@ class MainActivity : AppCompatActivity() {
         "phone" to Triple("📞", "फोन", "Phone"),
         "torch" to Triple("🔦", "टर्च", "Torch"),
         "camera" to Triple("📷", "क्यामेरा", "Camera"),
-        "photos" to Triple("🖼", "फोटो", "Photos")
+        "photos" to Triple("🖼", "फोटो", "Photos"),
+        "sos" to Triple("🆘", "आपतकाल", "SOS"),
+        "loud" to Triple("🔊", "ठूलो आवाज", "Loud")
     )
 
     private fun tiles(): MutableList<String> {
@@ -188,6 +203,11 @@ class MainActivity : AppCompatActivity() {
         sv.addView(col)
         root.addView(sv)
         col.addView(clockCard())
+        val emptyTaps = android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onDoubleTap(e: MotionEvent): Boolean { screenOff(); return true }
+        })
+        col.setOnTouchListener { _, e -> emptyTaps.onTouchEvent(e) }
         val list = tiles()
         val n = cols()
         val size = (resources.displayMetrics.widthPixels - dp(20)) / n - dp(10)
@@ -224,7 +244,12 @@ class MainActivity : AppCompatActivity() {
         if (b != null) c.addView(label(Bs.format(b) + "   ·   " + (info?.let { Astro.tithiName(it.tithi) } ?: ""), 19f, C.TEXT, true).lin(t = dp(4)))
         info?.fests?.firstOrNull()?.let { f -> c.addView(label(f.emoji + " " + f.name(), 16f, 0xFFFF8A80.toInt(), true)) }
         battery()?.let { c.addView(label(it, 14f, C.SUB).lin(t = dp(2))) }
-        c.setOnClickListener { speak() }
+        val gd = android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean { speak(); return true }
+            override fun onDoubleTap(e: MotionEvent): Boolean { screenOff(); return true }
+        })
+        c.setOnTouchListener { _, e -> gd.onTouchEvent(e) }
         return c
     }
 
@@ -246,7 +271,7 @@ class MainActivity : AppCompatActivity() {
     private fun tile(k: String, i: Int = 0): View {
         val v = FrameLayout(this)
         val on = k == "torch" && torchOn
-        v.background = ripple(if (on) 0xFFFFC93C.toInt() else tileColor(i), 26f)
+        v.background = ripple(if (k == "sos") 0xFFE53935.toInt() else if (on) 0xFFFFC93C.toInt() else tileColor(i), 26f)
         v.contentDescription = tileName(k)
         val big = when (cols()) { 1 -> 110; 2 -> 84; 3 -> 62; else -> 48 }
         if (k.startsWith("app:")) {
@@ -335,7 +360,8 @@ class MainActivity : AppCompatActivity() {
         val day = Bs.todayEpoch()
         val b = Bs.fromEpoch(day)
         val info = today()
-        val text = if (voice != "en") {
+        val spoken = useVoice()
+        val text = if (spoken != "en") {
             val part = when (hh) { in 4..11 -> "बिहानको"; in 12..15 -> "दिउँसोको"; in 16..19 -> "साँझको"; else -> "रातिको" }
             val time = "अहिले $part ${ONES[h12]} बजे" + if (mm > 0) "र $mm मिनेट गयो।" else "।"
             val date = if (b != null) " आज ${Bs.DAYS_NP[Bs.weekday(day)]}, ${Bs.MONTHS_NP[b.m - 1]} ${b.d} गते।" else ""
@@ -349,7 +375,7 @@ class MainActivity : AppCompatActivity() {
             time + date + tithi
         }
         try { tts?.setSpeechRate(0.85f); tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "time") } catch (_: Exception) { toast(text) }
-        if (voice == "en" && np() && !Store.bool("voice_tip", false)) {
+        if (spoken == "en" && Store.int("speak_lang", 0) == 0 && !Store.bool("voice_tip", false)) {
             Store.setBool("voice_tip", true)
             AlertDialog.Builder(this).setMessage("To hear it in Nepali: Settings → Accessibility → Text-to-speech → Google → install the Nepali (or Hindi) voice.")
                 .setPositiveButton("Open") { _, _ -> try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) {} }
@@ -363,6 +389,8 @@ class MainActivity : AppCompatActivity() {
         when (k) {
             "phone" -> { screen = "phone"; draw() }
             "torch" -> { torch(!torchOn); draw() }
+            "sos" -> sosCall()
+            "loud" -> loud()
             "wifi" -> wifi()
             "camera" -> try { startActivity(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)) } catch (_: Exception) { toast("No camera app") }
             "photos" -> {
@@ -374,6 +402,33 @@ class MainActivity : AppCompatActivity() {
                 val i = packageManager.getLaunchIntentForPackage(pkg)
                 if (i != null) startActivity(i) else toast(t("यो एप छैन", "This app isn't installed"))
             }
+        }
+    }
+
+    /** the big red SOS tile: calls the chosen emergency person after the countdown */
+    private fun sosCall() {
+        val l = sos()
+        val e = l.getOrNull(Store.int("sos_target", 0)) ?: l.firstOrNull()
+        if (e == null) { toast(t("सेटिङमा आपतकालीन नम्बर थप्नुहोस्", "Add an emergency number in Settings")); return }
+        countdown(Contact("sos", e.second, e.third, 0xFFE53935.toInt()))
+    }
+
+    /** ringtone and media volume to full, for hard of hearing */
+    private fun loud() {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            for (st in listOf(android.media.AudioManager.STREAM_RING, android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.STREAM_VOICE_CALL)) {
+                try { am.setStreamVolume(st, am.getStreamMaxVolume(st), android.media.AudioManager.FLAG_SHOW_UI) } catch (_: Exception) {}
+            }
+            toast(t("🔊 आवाज पूरा ठूलो भयो", "🔊 Volume set to full"))
+        } catch (_: Exception) {}
+    }
+
+    private fun screenOff() {
+        if (!Store.bool("double_tap_off", false)) return
+        if (!ScreenOff.now(this)) {
+            AlertDialog.Builder(this).setMessage(t("स्क्रिन बन्द गर्न अनुमति दिनुहोस्।", "Allow Yogi Sathi to turn the screen off."))
+                .setPositiveButton("OK") { _, _ -> ScreenOff.ask(this) }.setNegativeButton(t("पछि", "Later"), null).show()
         }
     }
 
@@ -515,10 +570,29 @@ class MainActivity : AppCompatActivity() {
         row(pc, t("फोन गर्दा नाम बोल्ने", "Say the name when calling"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("speak_name", true)) 0 else 1) {
             Store.setBool("speak_name", it == 0)
         }
+        val sl = sos()
+        if (sl.isNotEmpty()) row(pc, t("🆘 SOS बटनले कसलाई फोन गर्ने", "🆘 The SOS tile calls"), sl.map { it.first + " " + it.second },
+            Store.int("sos_target", 0).coerceIn(0, sl.size - 1)) { Store.setInt("sos_target", it) }
+        pc.addView(label(t("SOS टाइल थप्न: माथि \"＋ एप वा बटन\" → 🆘", "To show the SOS tile: \"＋ Add an app or button\" above → 🆘"), 13f, C.SUB).lin(t = dp(6)))
         row(pc, t("आपतकालीन नम्बर देखाउने", "Show emergency numbers"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("sos_show", true)) 0 else 1) {
             Store.setBool("sos_show", it == 0)
         }
         col.addView(pc)
+
+        section(t("आवाज र स्क्रिन", "VOICE & SCREEN"))
+        val vc = card()
+        row(vc, t("बोल्ने भाषा", "Speaking language"), listOf("नेपाली", "English"), Store.int("speak_lang", 0)) { Store.setInt("speak_lang", it) }
+        row(vc, t("हरेक घण्टा समय बोल्ने (बिहान ७ – राति ९)", "Say the time every hour (7 am – 9 pm)"), listOf(t("होइन", "Off"), t("हो", "On")),
+            if (Store.bool("chime", false)) 1 else 0) { Store.setBool("chime", it == 1); Chime.schedule(this) }
+        row(vc, t("दुई पटक छोएर स्क्रिन बन्द", "Double-tap to turn the screen off"), listOf(t("होइन", "Off"), t("हो", "On")),
+            if (Store.bool("double_tap_off", false)) 1 else 0) {
+            Store.setBool("double_tap_off", it == 1)
+            if (it == 1 && !ScreenOff.allowed(this)) ScreenOff.ask(this)
+        }
+        vc.addView(label(t("घडी वा खाली ठाउँमा दुई पटक छुनुहोस्। पहिलो पटक अनुमति माग्छ; त्यसपछि खोल्दा PIN/औंठाछाप चाहिन्छ।",
+            "Double-tap the clock or an empty space. Android asks once to allow it; after that the phone unlocks with its PIN or fingerprint."), 12f, C.SUB).lin(t = dp(6)))
+        vc.addView(goldButton(t("🔊 अहिले समय सुन्नुहोस्", "🔊 Hear the time now")) { speak() }.lin(t = dp(10)))
+        col.addView(vc)
 
         section(t("सुरक्षा र अन्य", "SAFETY & MORE"))
         val oc = card()
