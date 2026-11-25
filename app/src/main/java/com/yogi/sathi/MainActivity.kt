@@ -256,10 +256,30 @@ class MainActivity : AppCompatActivity() {
             }
             v.addView(label(name, if (cols() >= 3) 17f else 22f, C.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1 })
         }
-        v.setOnClickListener {
-            if (setup) tileMenu(k, index) else { v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); open(k) }
-        }
+        if (setup) {
+            // move and remove right on the tile
+            val bar = hbox()
+            bar.gravity = Gravity.CENTER
+            fun b(txt: String, f: () -> Unit) = bar.addView(label(txt, 22f, C.GOLD, true).apply {
+                gravity = Gravity.CENTER
+                setPadding(dp(10), dp(4), dp(10), dp(4))
+                setOnClickListener { f() }
+            })
+            b("◀") { moveTile(index, -1) }
+            b("🗑") { val l = tiles(); l.removeAt(index); saveTiles(l); draw() }
+            b("▶") { moveTile(index, 1) }
+            v.addView(bar)
+        } else v.setOnClickListener { v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); open(k) }
         return v
+    }
+
+    private fun moveTile(i: Int, by: Int) {
+        val l = tiles()
+        val j = i + by
+        if (j !in l.indices) return
+        l.add(j, l.removeAt(i))
+        saveTiles(l)
+        draw()
     }
 
     private fun addTile(): View = vbox().apply {
@@ -434,6 +454,9 @@ class MainActivity : AppCompatActivity() {
             Store.int("call_mode", 0)) { Store.setInt("call_mode", it) }
         row(t("भाषा", "Language"), listOf("नेपाली", "English"), if (Prefs.nepaliText) 0 else 1) { Store.setBool("np_text", it == 0) }
         row(t("अंक", "Numbers"), listOf("१२३", "123"), if (Prefs.nepaliDigits) 0 else 1) { Store.setBool("np_digits", it == 0) }
+        row(t("आपतकालीन नम्बर देखाउने", "Show emergency numbers"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("sos_show", true)) 0 else 1) {
+            Store.setBool("sos_show", it == 0)
+        }
         row(t("राति स्क्रिन मधुरो", "Dim at night"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("night_dim", true)) 0 else 1) { Store.setBool("night_dim", it == 0) }
         c.addView(label(t("📞 फोनका सम्पर्कहरू: फोन टाइल खोलेर थप्नुहोस्।", "📞 Contacts: open the Phone tile to add people."), 14f, C.SUB).lin(t = dp(10)))
         c.addView(goldButton(if (isHome()) t("🏠 यो होम स्क्रिन हो", "🏠 It is the home screen") else t("🏠 होम स्क्रिन बनाउनुहोस्", "🏠 Make it the home screen")) {
@@ -473,22 +496,7 @@ class MainActivity : AppCompatActivity() {
             val v = if (c == null) addPersonTile(w) else personTile(c, w)
             row?.addView(v, LinearLayout.LayoutParams(w, WRAP).apply { setMargins(gap / 2 + dp(2), gap / 2, gap / 2 + dp(2), gap / 2) })
         }
-        col.addView(label(t("आपतकालीन", "EMERGENCY"), 13f, C.SUB, true).apply { setPadding(dp(10), dp(18), 0, dp(6)) })
-        val er = hbox()
-        for ((icon, name, num) in listOf(Triple("🚓", t("प्रहरी", "Police"), "100"), Triple("🚑", t("एम्बुलेन्स", "Ambulance"), "102"), Triple("🚒", t("दमकल", "Fire"), "101"))) {
-            val b = vbox()
-            b.gravity = Gravity.CENTER
-            b.background = ripple(0xFF3A1414.toInt(), 18f)
-            b.setPadding(0, dp(10), 0, dp(10))
-            b.addView(label(icon, 26f).apply { gravity = Gravity.CENTER })
-            b.addView(label("$name $num", 14f, C.TEXT, true).apply { gravity = Gravity.CENTER })
-            b.setOnClickListener {
-                AlertDialog.Builder(this).setTitle("$name ($num)?").setPositiveButton(t("📞 फोन गर्नुहोस्", "📞 Call")) { _, _ -> call(num) }
-                    .setNegativeButton(t("होइन", "No"), null).show()
-            }
-            er.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
-        }
-        col.addView(er)
+        if (Store.bool("sos_show", true) || setup) emergency(col)
         col.addView(goldButton(t("🔢 नम्बर थिच्नुहोस्", "🔢 Dial a number")) {
             try { startActivity(Intent(Intent.ACTION_DIAL)) } catch (_: Exception) {}
         }.lin(t = dp(14)))
@@ -496,6 +504,87 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER; setPadding(0, dp(12), 0, 0)
         })
         if (!setup) col.addView(gearButton())
+    }
+
+    /** emergency numbers: the usual 100 / 102 / 101 or the family's own (son, neighbour…) */
+    private fun sos(): MutableList<Triple<String, String, String>> {
+        val s = Store.str("sos", "")
+        if (s.isEmpty()) return mutableListOf(Triple("🚓", t("प्रहरी", "Police"), "100"), Triple("🚑", t("एम्बुलेन्स", "Ambulance"), "102"),
+            Triple("🚒", t("दमकल", "Fire"), "101"))
+        return try {
+            JSONArray(s).let { a -> (0 until a.length()).map { val o = a.getJSONObject(it); Triple(o.optString("i", "🆘"), o.optString("n"), o.optString("p")) }.toMutableList() }
+        } catch (_: Exception) { mutableListOf() }
+    }
+
+    private fun saveSos(l: List<Triple<String, String, String>>) {
+        val a = JSONArray()
+        for ((i, n, p) in l) a.put(org.json.JSONObject().put("i", i).put("n", n).put("p", p))
+        Store.setStr("sos", a.toString())
+    }
+
+    private fun emergency(col: LinearLayout) {
+        val list = sos()
+        col.addView(label(t("आपतकालीन", "EMERGENCY") + if (setup && !Store.bool("sos_show", true)) t("  (लुकेको)", "  (hidden)") else "", 13f, C.SUB, true)
+            .apply { setPadding(dp(10), dp(18), 0, dp(6)) })
+        var er: LinearLayout? = null
+        val items: List<Triple<String, String, String>?> = list + if (setup) listOf(null) else emptyList()
+        for ((k, e) in items.withIndex()) {
+            if (k % 3 == 0) { er = hbox(); col.addView(er) }
+            val b = vbox()
+            b.gravity = Gravity.CENTER
+            b.setPadding(0, dp(10), 0, dp(10))
+            if (e == null) {
+                b.background = rounded(C.CARD, dpf(18f), dp(2), C.GOLD)
+                b.addView(label("＋", 26f, C.GOLD, true).apply { gravity = Gravity.CENTER })
+                b.addView(label(t("नम्बर थप्नुहोस्", "Add number"), 13f, C.GOLD, true).apply { gravity = Gravity.CENTER })
+                b.setOnClickListener { editSos(-1) }
+            } else {
+                val (icon, name, num) = e
+                b.background = ripple(0xFF3A1414.toInt(), 18f)
+                b.addView(label(icon, 26f).apply { gravity = Gravity.CENTER })
+                b.addView(label(name, 14f, C.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1 })
+                b.addView(label(num, 13f, C.SUB).apply { gravity = Gravity.CENTER; maxLines = 1 })
+                b.setOnClickListener {
+                    if (setup) editSos(k)
+                    else AlertDialog.Builder(this).setTitle("$name ($num)?").setPositiveButton(t("📞 फोन गर्नुहोस्", "📞 Call")) { _, _ -> call(num) }
+                        .setNegativeButton(t("होइन", "No"), null).show()
+                }
+            }
+            er?.addView(b, LinearLayout.LayoutParams(0, WRAP, 1f).apply { setMargins(dp(5), dp(4), dp(5), dp(4)) })
+        }
+        val rest = items.size % 3
+        if (rest != 0) for (x in 0 until 3 - rest) er?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
+    }
+
+    private fun editSos(i: Int) {
+        val l = sos()
+        val cur = l.getOrNull(i)
+        val box = vbox()
+        box.setPadding(dp(20), dp(8), dp(20), 0)
+        val name = EditText(this).apply { hint = t("नाम (जस्तै: छोरा, छिमेकी)", "Name (e.g. Son, Neighbour)"); setText(cur?.second ?: ""); textSize = 20f
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS }
+        val num = EditText(this).apply { hint = t("फोन नम्बर", "Phone number"); setText(cur?.third ?: ""); textSize = 20f; inputType = InputType.TYPE_CLASS_PHONE }
+        box.addView(name)
+        box.addView(num)
+        val icons = listOf("🆘", "👨", "👩", "👦", "👧", "🏠", "🚓", "🚑", "🚒", "🏥")
+        var icon = cur?.first ?: "🆘"
+        val r = hbox()
+        fun drawIcons() { r.removeAllViews(); for (e in icons) r.addView(chip(e, e == icon) { icon = e; drawIcons() }) }
+        drawIcons()
+        box.addView(HorizontalScrollView(this).apply { addView(r) }.lin(t = dp(8)))
+        val d = AlertDialog.Builder(this).setTitle(t("आपतकालीन नम्बर", "Emergency number")).setView(box)
+            .setPositiveButton(t("सेभ", "Save")) { _, _ ->
+                val n = name.text.toString().trim()
+                val p = People.clean(num.text.toString())
+                if (n.isEmpty() || p.isEmpty()) { toast(t("नाम र नम्बर लेख्नुहोस्", "Write a name and number")); return@setPositiveButton }
+                if (i >= 0) l[i] = Triple(icon, n, p) else l.add(Triple(icon, n, p))
+                saveSos(l)
+                draw()
+            }.setNegativeButton(t("रद्द", "Cancel"), null)
+        if (i >= 0) {
+            d.setNeutralButton(t("हटाउनुहोस्", "Remove")) { _, _ -> l.removeAt(i); saveSos(l); draw() }
+        }
+        d.show()
     }
 
     private fun personTile(c: Contact, w: Int): View {
