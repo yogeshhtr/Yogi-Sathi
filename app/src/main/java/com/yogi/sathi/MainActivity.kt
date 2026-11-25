@@ -114,7 +114,8 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
-            screen == "phone" -> { screen = "home"; draw() }
+            screen == "phone" && setup -> { screen = "settings"; setup = false; draw() }
+            screen == "phone" || screen == "settings" -> { screen = "home"; setup = false; draw() }
             setup -> { setup = false; draw() }
             !isHome() -> @Suppress("DEPRECATION") super.onBackPressed()
         }
@@ -146,14 +147,15 @@ class MainActivity : AppCompatActivity() {
     private val BUILTIN = linkedMapOf(
         "phone" to Triple("📞", "फोन", "Phone"),
         "torch" to Triple("🔦", "टर्च", "Torch"),
-        "wifi" to Triple("📶", "वाइफाइ", "Wi-Fi"),
         "camera" to Triple("📷", "क्यामेरा", "Camera"),
         "photos" to Triple("🖼", "फोटो", "Photos")
     )
 
     private fun tiles(): MutableList<String> {
         val s = Store.str("tiles", "")
-        if (s.isNotEmpty()) return try { JSONArray(s).let { a -> (0 until a.length()).map { a.getString(it) }.toMutableList() } } catch (_: Exception) { defaults() }
+        if (s.isNotEmpty()) return try {
+            JSONArray(s).let { a -> (0 until a.length()).map { a.getString(it) } }.filter { it.startsWith("app:") || BUILTIN.containsKey(it) }.toMutableList()
+        } catch (_: Exception) { defaults() }
         return defaults()
     }
 
@@ -161,7 +163,7 @@ class MainActivity : AppCompatActivity() {
         val out = mutableListOf("phone")
         for (p in listOf("com.whatsapp", "com.google.android.youtube", "com.amma.tv", "com.yogi.meds", "com.yogi.patro"))
             if (packageManager.getLaunchIntentForPackage(p) != null) out.add("app:$p")
-        out.addAll(listOf("camera", "photos", "torch", "wifi"))
+        out.addAll(listOf("camera", "photos", "torch"))
         return out
     }
 
@@ -176,28 +178,26 @@ class MainActivity : AppCompatActivity() {
     private fun draw() {
         nightDim()
         root.removeAllViews()
-        if (screen == "phone") { phone(); return }
+        when (screen) {
+            "phone" -> { phone(); return }
+            "settings" -> { settingsScreen(); return }
+        }
         val sv = ScrollView(this)
         val col = vbox()
         col.setPadding(dp(10), dp(24), dp(10), dp(16))
         sv.addView(col)
         root.addView(sv)
         col.addView(clockCard())
-        if (setup) col.addView(label(t("⚙ सेटिङ: टाइल छोएर हटाउनुहोस्/सार्नुहोस्, ＋ ले थप्नुहोस्", "⚙ Setup: tap a tile to remove or move it, ＋ to add"),
-            15f, C.GOLD, true).apply { setPadding(dp(8), dp(8), dp(8), dp(4)) })
         val list = tiles()
-        val items: List<String?> = list + if (setup) listOf(null) else emptyList()
         val n = cols()
         val size = (resources.displayMetrics.widthPixels - dp(20)) / n - dp(10)
         var row: LinearLayout? = null
-        for ((i, k) in items.withIndex()) {
+        for ((i, k) in list.withIndex()) {
             if (i % n == 0) { row = hbox(); col.addView(row) }
-            val v = if (k == null) addTile() else tile(k, i)
-            row?.addView(v, LinearLayout.LayoutParams(0, (size * if (n >= 3) 1.05f else 0.75f).toInt(), 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
+            row?.addView(tile(k), LinearLayout.LayoutParams(0, (size * if (n >= 3) 1f else 0.72f).toInt(), 1f).apply { setMargins(dp(5), dp(5), dp(5), dp(5)) })
         }
-        val rest = items.size % n
-        if (rest != 0) for (k in 0 until n - rest) row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
-        if (setup) settings(col)
+        val rest = list.size % n
+        if (list.isNotEmpty() && rest != 0) for (k in 0 until n - rest) row?.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { setMargins(dp(5), 0, dp(5), 0) })
         col.addView(gearButton())
     }
 
@@ -214,7 +214,7 @@ class MainActivity : AppCompatActivity() {
         c.setPadding(dp(16), dp(12), dp(16), dp(12))
         val r = hbox()
         val time = Bs.num(h12) + ":" + (if (Prefs.nepaliDigits) Bs.num(mm).padStart(2, '०') else mm.toString().padStart(2, '0'))
-        r.addView(label(time, 48f, C.TEXT, true).apply { includeFontPadding = false })
+        r.addView(label(time, listOf(38f, 48f, 62f)[Store.int("clock_size", 1).coerceIn(0, 2)], C.TEXT, true).apply { includeFontPadding = false })
         val side = vbox()
         side.addView(label(dayPart(hh), 18f, C.GOLD, true))
         if (b != null) side.addView(label(Bs.dayName(Bs.weekday(day)), 16f, C.SUB))
@@ -235,41 +235,24 @@ class MainActivity : AppCompatActivity() {
         else -> t("राति", "Night")
     }
 
-    private fun tile(k: String, index: Int): View {
-        val v = vbox()
-        v.gravity = Gravity.CENTER
-        val on = (k == "torch" && torchOn) || (k == "wifi" && wifiOn())
+    private fun tileName(k: String): String =
+        if (k.startsWith("app:")) appLabel(k.removePrefix("app:")) else BUILTIN[k]?.let { t(it.second, it.third) } ?: k
+
+    /** a big icon only (the name is read out by TalkBack) */
+    private fun tile(k: String): View {
+        val v = FrameLayout(this)
+        val on = k == "torch" && torchOn
         v.background = ripple(if (on) 0xFF5A4810.toInt() else C.CARD, 26f)
+        v.contentDescription = tileName(k)
+        val big = when (cols()) { 1 -> 110; 2 -> 84; 3 -> 62; else -> 48 }
         if (k.startsWith("app:")) {
-            val pkg = k.removePrefix("app:")
             val icon = ImageView(this)
-            try { icon.setImageDrawable(packageManager.getApplicationIcon(pkg)) } catch (_: Exception) {}
-            v.addView(icon, LinearLayout.LayoutParams(dp(if (cols() >= 3) 54 else 64), dp(if (cols() >= 3) 54 else 64)))
-            v.addView(label(appLabel(pkg), if (cols() >= 3) 17f else 22f, C.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(dp(4), dp(6), dp(4), 0) })
+            try { icon.setImageDrawable(packageManager.getApplicationIcon(k.removePrefix("app:"))) } catch (_: Exception) {}
+            v.addView(icon, FrameLayout.LayoutParams(dp(big), dp(big), Gravity.CENTER))
         } else {
-            val b = BUILTIN[k] ?: Triple("❔", k, k)
-            v.addView(label(b.first, if (cols() >= 3) 38f else 46f).apply { gravity = Gravity.CENTER })
-            val name = when {
-                k == "torch" && torchOn -> t("टर्च बन्द", "Torch off")
-                k == "wifi" -> t(b.second, b.third) + if (wifiOn()) " ✓" else ""
-                else -> t(b.second, b.third)
-            }
-            v.addView(label(name, if (cols() >= 3) 17f else 22f, C.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1 })
+            v.addView(label(BUILTIN[k]?.first ?: "❔", big * 0.62f).apply { gravity = Gravity.CENTER }, FrameLayout.LayoutParams(MATCH, MATCH))
         }
-        if (setup) {
-            // move and remove right on the tile
-            val bar = hbox()
-            bar.gravity = Gravity.CENTER
-            fun b(txt: String, f: () -> Unit) = bar.addView(label(txt, 22f, C.GOLD, true).apply {
-                gravity = Gravity.CENTER
-                setPadding(dp(10), dp(4), dp(10), dp(4))
-                setOnClickListener { f() }
-            })
-            b("◀") { moveTile(index, -1) }
-            b("🗑") { val l = tiles(); l.removeAt(index); saveTiles(l); draw() }
-            b("▶") { moveTile(index, 1) }
-            v.addView(bar)
-        } else v.setOnClickListener { v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); open(k) }
+        v.setOnClickListener { v.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); open(k) }
         return v
     }
 
@@ -290,6 +273,15 @@ class MainActivity : AppCompatActivity() {
         setOnClickListener { addMenu() }
     }
 
+    private fun openSettings() {
+        val pin = Store.str("pin", "")
+        if (pin.isEmpty()) { screen = "settings"; draw(); return }
+        val e = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; textSize = 24f; hint = "PIN" }
+        AlertDialog.Builder(this).setTitle(t("सेटिङ PIN", "Settings PIN")).setView(FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(e) })
+            .setPositiveButton("OK") { _, _ -> if (e.text.toString() == pin) { screen = "settings"; draw() } else toast(t("PIN मिलेन", "Wrong PIN")) }
+            .setNegativeButton(t("रद्द", "Cancel"), null).show()
+    }
+
     private fun gearButton(): View {
         val gear = label(if (setup) t("✓ सकियो", "✓ Done") else "⚙", if (setup) 18f else 22f, if (setup) 0xFF1A1110.toInt() else C.SUB, setup)
         gear.gravity = Gravity.CENTER
@@ -297,7 +289,7 @@ class MainActivity : AppCompatActivity() {
         gear.background = rounded(if (setup) C.GOLD else C.CARD, dpf(22f))
         if (setup) gear.setOnClickListener { setup = false; draw() }
         else {
-            val hold = Runnable { gear.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); setup = true; draw() }
+            val hold = Runnable { gear.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); openSettings() }
             gear.setOnTouchListener { v, e ->
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { (v as TextView).text = "⏳"; h.postDelayed(hold, 2000) }
@@ -440,29 +432,109 @@ class MainActivity : AppCompatActivity() {
         }.setNegativeButton(t("रद्द", "Cancel"), null).show()
     }
 
-    private fun settings(col: LinearLayout) {
-        val c = card()
-        fun row(name: String, opts: List<String>, sel: Int, pick: (Int) -> Unit) {
-            c.addView(label(name, 14f, C.SUB, true).lin(t = dp(10), b = dp(4)))
+    private fun settingsScreen() {
+        val sv = ScrollView(this)
+        val col = vbox()
+        col.setPadding(dp(12), dp(24), dp(12), dp(24))
+        sv.addView(col)
+        root.addView(sv)
+        val head = hbox()
+        head.addView(label(t("⚙ सेटिङ", "⚙ Settings"), 28f, C.TEXT, true).lin(0, WRAP, 1f))
+        head.addView(goldButton(t("✓ सकियो", "✓ Done")) { screen = "home"; draw() })
+        col.addView(head)
+
+        fun section(txt: String) = col.addView(label(txt, 14f, C.GOLD, true).apply { setPadding(dp(6), dp(20), 0, dp(6)) })
+        fun row(c: LinearLayout, name: String, opts: List<String>, sel: Int, pick: (Int) -> Unit) {
+            c.addView(label(name, 15f, C.SUB, true).lin(t = dp(10), b = dp(4)))
             val r = hbox()
             opts.forEachIndexed { i, o -> r.addView(chip(o, i == sel) { pick(i); draw() }) }
             c.addView(HorizontalScrollView(this).apply { addView(r) })
         }
-        row(t("एक पङ्क्तिमा टाइल", "Tiles per row"), listOf("1", "2", "3", "4"), cols() - 1) { Store.setInt("cols", it + 1) }
-        row(t("फोनमा एक पङ्क्तिमा फोटो", "Photos per row in Phone"), listOf("1", "2", "3", "4"), phoneCols() - 1) { Store.setInt("phone_cols", it + 1) }
-        row(t("फोटो छुँदा", "When a photo is tapped"), listOf(t("३ सेकेन्ड गन्ती", "3-second countdown"), t("सोधेर", "Ask first"), t("तुरुन्त", "Call at once")),
+
+        // tiles: one clear row each, with big buttons
+        section(t("होम स्क्रिनका टाइलहरू", "HOME SCREEN TILES"))
+        val tc = card()
+        val list = tiles()
+        if (list.isEmpty()) tc.addView(label(t("कुनै टाइल छैन", "No tiles"), 15f, C.SUB))
+        for ((i, k) in list.withIndex()) {
+            val r = hbox()
+            r.setPadding(0, dp(6), 0, dp(6))
+            if (k.startsWith("app:")) {
+                val iv = ImageView(this)
+                try { iv.setImageDrawable(packageManager.getApplicationIcon(k.removePrefix("app:"))) } catch (_: Exception) {}
+                r.addView(iv, LinearLayout.LayoutParams(dp(40), dp(40)))
+            } else r.addView(label(BUILTIN[k]?.first ?: "❔", 28f).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(40), dp(40)))
+            r.addView(label(tileName(k), 17f, C.TEXT, true).apply { maxLines = 1 }.lin(0, WRAP, 1f, l = dp(12)))
+            fun btn(txt: String, enabled: Boolean, color: Int, f: () -> Unit) = r.addView(label(txt, 20f, color, true).apply {
+                gravity = Gravity.CENTER
+                background = ripple(C.CARD2, 12f)
+                alpha = if (enabled) 1f else 0.25f
+                if (enabled) setOnClickListener { f() }
+            }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(6) })
+            btn("↑", i > 0, C.TEXT) { moveTile(i, -1) }
+            btn("↓", i < list.size - 1, C.TEXT) { moveTile(i, 1) }
+            btn("🗑", true, C.TEXT) {
+                AlertDialog.Builder(this).setTitle(t("${tileName(k)} हटाउने?", "Remove ${tileName(k)}?"))
+                    .setPositiveButton(t("हटाउनुहोस्", "Remove")) { _, _ -> val l = tiles(); l.removeAt(i); saveTiles(l); draw() }
+                    .setNegativeButton(t("रद्द", "Cancel"), null).show()
+            }
+            tc.addView(r)
+        }
+        tc.addView(goldButton(t("＋ एप वा बटन थप्नुहोस्", "＋ Add an app or button")) { addMenu() }.lin(t = dp(10)))
+        tc.addView(label(t("↺ सुरुकै टाइलमा फर्काउनुहोस्", "↺ Reset to the starting tiles"), 14f, C.SUB).apply {
+            gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(4))
+            setOnClickListener { Store.setStr("tiles", ""); draw() }
+        })
+        col.addView(tc)
+
+        section(t("देखावट", "LOOK"))
+        val lc = card()
+        row(lc, t("एक पङ्क्तिमा टाइल", "Tiles per row"), listOf("1", "2", "3", "4"), cols() - 1) { Store.setInt("cols", it + 1) }
+        row(lc, t("घडीको आकार", "Clock size"), listOf(t("सानो", "Small"), t("मध्यम", "Medium"), t("ठूलो", "Big")), Store.int("clock_size", 1)) { Store.setInt("clock_size", it) }
+        row(lc, t("भाषा", "Language"), listOf("नेपाली", "English"), if (Prefs.nepaliText) 0 else 1) { Store.setBool("np_text", it == 0) }
+        row(lc, t("अंक", "Numbers"), listOf("१२३", "123"), if (Prefs.nepaliDigits) 0 else 1) { Store.setBool("np_digits", it == 0) }
+        row(lc, t("राति स्क्रिन मधुरो (९ बजेदेखि ५ बजेसम्म)", "Dim the screen at night (9 pm – 5 am)"), listOf(t("हो", "On"), t("होइन", "Off")),
+            if (Store.bool("night_dim", true)) 0 else 1) { Store.setBool("night_dim", it == 0) }
+        col.addView(lc)
+
+        section(t("फोन", "PHONE"))
+        val pc = card()
+        pc.addView(goldButton(t("📞 सम्पर्क र आपतकालीन नम्बर मिलाउनुहोस्", "📞 Edit contacts and emergency numbers")) {
+            setup = true; screen = "phone"; draw()
+        })
+        row(pc, t("फोनमा एक पङ्क्तिमा फोटो", "Photos per row"), listOf("1", "2", "3", "4"), phoneCols() - 1) { Store.setInt("phone_cols", it + 1) }
+        row(pc, t("फोटो छुँदा", "When a photo is tapped"), listOf(t("३ सेकेन्ड गन्ती", "3-second countdown"), t("सोधेर", "Ask first"), t("तुरुन्त", "Call at once")),
             Store.int("call_mode", 0)) { Store.setInt("call_mode", it) }
-        row(t("भाषा", "Language"), listOf("नेपाली", "English"), if (Prefs.nepaliText) 0 else 1) { Store.setBool("np_text", it == 0) }
-        row(t("अंक", "Numbers"), listOf("१२३", "123"), if (Prefs.nepaliDigits) 0 else 1) { Store.setBool("np_digits", it == 0) }
-        row(t("आपतकालीन नम्बर देखाउने", "Show emergency numbers"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("sos_show", true)) 0 else 1) {
+        row(pc, t("फोन गर्दा नाम बोल्ने", "Say the name when calling"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("speak_name", true)) 0 else 1) {
+            Store.setBool("speak_name", it == 0)
+        }
+        row(pc, t("आपतकालीन नम्बर देखाउने", "Show emergency numbers"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("sos_show", true)) 0 else 1) {
             Store.setBool("sos_show", it == 0)
         }
-        row(t("राति स्क्रिन मधुरो", "Dim at night"), listOf(t("हो", "On"), t("होइन", "Off")), if (Store.bool("night_dim", true)) 0 else 1) { Store.setBool("night_dim", it == 0) }
-        c.addView(label(t("📞 फोनका सम्पर्कहरू: फोन टाइल खोलेर थप्नुहोस्।", "📞 Contacts: open the Phone tile to add people."), 14f, C.SUB).lin(t = dp(10)))
-        c.addView(goldButton(if (isHome()) t("🏠 यो होम स्क्रिन हो", "🏠 It is the home screen") else t("🏠 होम स्क्रिन बनाउनुहोस्", "🏠 Make it the home screen")) {
+        col.addView(pc)
+
+        section(t("सुरक्षा र अन्य", "SAFETY & MORE"))
+        val oc = card()
+        val pin = Store.str("pin", "")
+        oc.addView(goldButton(if (pin.isEmpty()) t("🔒 सेटिङमा PIN राख्नुहोस्", "🔒 Protect settings with a PIN") else t("🔓 PIN हटाउनुहोस्", "🔓 Remove the PIN")) {
+            if (pin.isNotEmpty()) { Store.setStr("pin", ""); draw(); return@goldButton }
+            val e = EditText(this).apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; textSize = 24f; hint = "4–8 digits" }
+            AlertDialog.Builder(this).setTitle("PIN").setView(FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(e) })
+                .setPositiveButton("OK") { _, _ ->
+                    val v = e.text.toString()
+                    if (v.length in 4..8) { Store.setStr("pin", v); toast(t("PIN राखियो", "PIN set")); draw() } else toast("4–8 digits")
+                }.setNegativeButton(t("रद्द", "Cancel"), null).show()
+        })
+        oc.addView(goldButton(if (isHome()) t("🏠 यो होम स्क्रिन हो", "🏠 It is the home screen") else t("🏠 होम स्क्रिन बनाउनुहोस्", "🏠 Make it the home screen")) {
             try { startActivity(Intent(Settings.ACTION_HOME_SETTINGS)) } catch (_: Exception) { try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {} }
-        }.lin(t = dp(12)))
-        col.addView(c)
+        }.lin(t = dp(10)))
+        oc.addView(goldButton(t("🔊 नेपाली आवाज (Text-to-speech)", "🔊 Nepali voice (Text-to-speech)")) {
+            try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) } catch (_: Exception) { try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {} }
+        }.lin(t = dp(10)))
+        oc.addView(goldButton(t("⚙️ फोनको सेटिङ", "⚙️ Phone settings")) {
+            try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Exception) {}
+        }.lin(t = dp(10)))
+        col.addView(oc)
     }
 
     private fun goldButton(s: String, f: () -> Unit): TextView = label(s, 16f, 0xFF1A1110.toInt(), true).apply {
@@ -483,7 +555,7 @@ class MainActivity : AppCompatActivity() {
         val head = hbox()
         head.addView(label("‹", 34f, C.TEXT, true).apply { setPadding(dp(10), 0, dp(14), 0); setOnClickListener { screen = "home"; draw() } })
         head.addView(label(t("📞 फोन", "📞 Phone"), 30f, C.TEXT, true).lin(0, WRAP, 1f))
-        if (setup) head.addView(label(t("✓ सकियो", "✓ Done"), 16f, C.GOLD, true).apply { setPadding(dp(10), dp(6), dp(10), dp(6)); setOnClickListener { setup = false; draw() } })
+        if (setup) head.addView(label(t("✓ सकियो", "✓ Done"), 16f, C.GOLD, true).apply { setPadding(dp(10), dp(6), dp(10), dp(6)); setOnClickListener { setup = false; screen = "settings"; draw() } })
         col.addView(head)
         val people = People.all()
         val n = phoneCols()
@@ -622,7 +694,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun tapCall(c: Contact) {
-        try { tts?.speak(c.name, TextToSpeech.QUEUE_FLUSH, null, "n") } catch (_: Exception) {}
+        if (Store.bool("speak_name", true)) try { tts?.speak(c.name, TextToSpeech.QUEUE_FLUSH, null, "n") } catch (_: Exception) {}
         when (Store.int("call_mode", 0)) {
             2 -> call(c.number)
             1 -> AlertDialog.Builder(this).setTitle(t("${c.name} लाई फोन गर्ने?", "Call ${c.name}?"))
