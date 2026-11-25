@@ -572,7 +572,7 @@ class MainActivity : AppCompatActivity() {
         val items: List<Contact?> = people + if (setup || people.isEmpty()) listOf(null) else emptyList()
         for ((i, c) in items.withIndex()) {
             if (i % n == 0) { row = hbox(); row.gravity = Gravity.TOP; col.addView(row) }
-            val v = if (c == null) addPersonTile(w) else personTile(c, w)
+            val v = if (c == null) addPersonTile(w) else personTile(c, w, i)
             row?.addView(v, LinearLayout.LayoutParams(w, WRAP).apply { setMargins(gap / 2 + dp(2), gap / 2, gap / 2 + dp(2), gap / 2) })
         }
         if (Store.bool("sos_show", true) || setup) emergency(col)
@@ -666,10 +666,10 @@ class MainActivity : AppCompatActivity() {
         d.show()
     }
 
-    private fun personTile(c: Contact, w: Int): View {
+    private fun personTile(c: Contact, w: Int, i: Int = 0): View {
         val t = vbox()
         t.gravity = Gravity.CENTER_HORIZONTAL
-        t.background = ripple(C.CARD, 22f)
+        t.background = ripple(tileColor(i), 22f)
         t.setPadding(dp(6), dp(6), dp(6), dp(10))
         val pic = FrameLayout(this)
         pic.background = rounded(c.color, dpf(18f))
@@ -685,7 +685,7 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(6), 0) })
         val side = w - dp(12)
         t.addView(pic, LinearLayout.LayoutParams(side, side))
-        t.addView(label(c.name, if (phoneCols() >= 4) 15f else 20f, C.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 2; setPadding(0, dp(6), 0, 0) })
+        t.addView(label(c.name, if (phoneCols() >= 4) 15f else 20f, if (Store.int("tile_style", 0) == 1) C.TEXT else 0xFF1A1110.toInt(), true).apply { gravity = Gravity.CENTER; maxLines = 2; setPadding(0, dp(6), 0, 0) })
         t.setOnClickListener { if (setup) editPerson(c) else tapCall(c) }
         t.setOnLongClickListener { if (!setup) more(c); true }
         return t
